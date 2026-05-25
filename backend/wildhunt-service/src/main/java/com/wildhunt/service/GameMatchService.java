@@ -34,6 +34,7 @@ public class GameMatchService {
     private final Map<Long, MatchSnapshot> matches = new ConcurrentHashMap<>();
     private final Map<Long, Long> currentMatchByUser = new ConcurrentHashMap<>();
     private final Map<Long, RuntimeMatch> runtimeMatches = new ConcurrentHashMap<>();
+    private final Map<Long, Object> settleLocks = new ConcurrentHashMap<>();
 
     public GameMatchService() {
         this(new UserService(), null, null, new SystemConfigService(), null, new PlayerPresenceService());
@@ -150,26 +151,34 @@ public class GameMatchService {
 
     @Transactional
     public void settle(Long matchId, boolean wolfWin) {
-        MatchSnapshot snapshot = matches.get(matchId);
-        if (snapshot == null || "FINISHED".equals(snapshot.status())) return;
-        for (MatchSnapshot.Player player : snapshot.players().stream().filter(item -> !item.ai()).toList()) {
-            boolean win = (player.roleType() == RoleType.WOLF) == wolfWin;
-            int expDelta = win ? 60 : 20;
-            int trophyDelta = win ? 30 : -10;
-            userService.recordMatch(player.userId(), win, expDelta, trophyDelta);
-            if (seasonPassService != null) {
-                seasonPassService.addExp(player.userId(), expDelta, "MATCH", String.valueOf(matchId));
+        if (matchId == null) return;
+        Object lock = settleLocks.computeIfAbsent(matchId, ignored -> new Object());
+        try {
+            synchronized (lock) {
+                MatchSnapshot snapshot = matches.get(matchId);
+                if (snapshot == null || "FINISHED".equals(snapshot.status())) return;
+                for (MatchSnapshot.Player player : snapshot.players().stream().filter(item -> !item.ai()).toList()) {
+                    boolean win = (player.roleType() == RoleType.WOLF) == wolfWin;
+                    int expDelta = win ? 60 : 20;
+                    int trophyDelta = win ? 30 : -10;
+                    userService.recordMatch(player.userId(), win, expDelta, trophyDelta);
+                    if (seasonPassService != null) {
+                        seasonPassService.addExp(player.userId(), expDelta, "MATCH", String.valueOf(matchId));
+                    }
+                    currentMatchByUser.remove(player.userId());
+                    presenceService.clearPlaying(player.userId());
+                    persistPlayerResult(matchId, player.userId(), win, expDelta, trophyDelta);
+                }
+                MatchSnapshot finished = new MatchSnapshot(snapshot.matchId(), snapshot.roomId(), "FINISHED",
+                        snapshot.matchSeed(), snapshot.gameConfig(), snapshot.players().stream()
+                        .sorted(Comparator.comparing(MatchSnapshot.Player::ai).thenComparing(MatchSnapshot.Player::nickname))
+                        .toList());
+                matches.put(matchId, finished);
+                persistMatchStatus(matchId, "FINISHED");
             }
-            currentMatchByUser.remove(player.userId());
-            presenceService.clearPlaying(player.userId());
-            persistPlayerResult(matchId, player.userId(), win, expDelta, trophyDelta);
+        } finally {
+            settleLocks.remove(matchId, lock);
         }
-        MatchSnapshot finished = new MatchSnapshot(snapshot.matchId(), snapshot.roomId(), "FINISHED",
-                snapshot.matchSeed(), snapshot.gameConfig(), snapshot.players().stream()
-                .sorted(Comparator.comparing(MatchSnapshot.Player::ai).thenComparing(MatchSnapshot.Player::nickname))
-                .toList());
-        matches.put(matchId, finished);
-        persistMatchStatus(matchId, "FINISHED");
     }
 
     public void clearRuntime() {
