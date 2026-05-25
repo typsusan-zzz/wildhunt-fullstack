@@ -1,0 +1,18 @@
+package com.wildhunt.common.exception;
+
+public enum ErrorCode {
+    UNAUTHORIZED,
+    NOT_FOUND,
+    BAD_REQUEST,
+    ROOM_FULL,
+    ROOM_NOT_FOUND,
+    ROOM_ALREADY_STARTED,
+    NOT_ROOM_OWNER,
+    ALREADY_IN_ROOM,
+    NOT_ROOM_MEMBER,
+    MATCH_ALREADY_QUEUED,
+    CHAT_RATE_LIMITED,
+    REWARD_ALREADY_CLAIMED,
+    ROOM_NOT_READY,
+    INTERNAL_ERROR
+}

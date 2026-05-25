@@ -1,0 +1,20 @@
+{
+  "name": "wildhunt",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "audio:generate": "node scripts/generate-audio-assets.mjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12"
+  },
+  "dependencies": {
+    "@types/three": "^0.184.1",
+    "three": "^0.184.0"
+  }
+}

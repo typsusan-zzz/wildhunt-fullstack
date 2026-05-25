@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: wildhunt-admin
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/wildhunt?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
+  profiles:
+    default: local
+  flyway:
+    enabled: false
+
+server:
+  port: 8080
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Frontend builds
+dist/
+dist-ssr/
+
+# Backend builds
+target/
+
+# Logs and local runtime files
+logs/
+*.log
+*.pid
+*.local
+
+# Local config
+.env
+.env.*
+application-local.yml
+
+# IDE and OS files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Verification artifacts
+verification-*.png
