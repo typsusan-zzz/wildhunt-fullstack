@@ -16,7 +16,14 @@ export type GameInputState = {
   deerEat: boolean;
   deerLook: boolean;
   deerCamouflage: boolean;
+  wolfPounceSeq: number;
+  wolfScentSeq: number;
+  deerEatSeq: number;
+  deerLookSeq: number;
+  deerCamouflageSeq: number;
 };
+
+type OneShotAction = 'wolfPounce' | 'wolfScent' | 'deerEat' | 'deerLook' | 'deerCamouflage';
 
 type BindGameInputOptions = {
   input: GameInputState;
@@ -60,16 +67,16 @@ export function bindGameInput(options: BindGameInputOptions) {
     input.sprint = true;
   });
   options.trackBtn.addEventListener('click', () => {
-    if (match.role === 'wolf') input.wolfScent = true;
-    else input.deerEat = true;
+    if (match.role === 'wolf') triggerRoleAction(input, 'wolfScent');
+    else triggerRoleAction(input, 'deerEat');
   });
   options.lookBtn.addEventListener('click', () => {
-    if (match.role === 'wolf') input.wolfScent = true;
-    else input.deerLook = true;
+    if (match.role === 'wolf') triggerRoleAction(input, 'wolfScent');
+    else triggerRoleAction(input, 'deerLook');
   });
   options.attackBtn.addEventListener('click', () => {
-    if (match.role === 'wolf') input.wolfPounce = true;
-    else input.deerCamouflage = true;
+    if (match.role === 'wolf') triggerRoleAction(input, 'wolfPounce');
+    else triggerRoleAction(input, 'deerCamouflage');
   });
   options.startWolfBtn.addEventListener('click', () => {
     options.startDialog.close();
@@ -109,6 +116,12 @@ export function clearRoleActions(input: GameInputState) {
   input.deerEat = false;
   input.deerLook = false;
   input.deerCamouflage = false;
+}
+
+function triggerRoleAction(input: GameInputState, action: OneShotAction) {
+  input[action] = true;
+  const seqKey = `${action}Seq` as const;
+  input[seqKey] += 1;
 }
 
 function bindVirtualJoystick(input: GameInputState, joystickEl: HTMLElement) {
@@ -165,11 +178,11 @@ function setKey(input: GameInputState, match: MatchState, code: string, pressed:
   if (code === 'ShiftLeft' || code === 'ShiftRight') input.sprint = pressed;
   if (!pressed) return;
   if (match.role === 'wolf') {
-    if (code === 'Space') input.wolfPounce = true;
-    if (code === 'KeyQ' || code === 'KeyE') input.wolfScent = true;
+    if (code === 'Space') triggerRoleAction(input, 'wolfPounce');
+    if (code === 'KeyQ' || code === 'KeyE') triggerRoleAction(input, 'wolfScent');
     return;
   }
-  if (code === 'Space') input.deerCamouflage = true;
-  if (code === 'KeyQ') input.deerEat = true;
-  if (code === 'KeyE') input.deerLook = true;
+  if (code === 'Space') triggerRoleAction(input, 'deerCamouflage');
+  if (code === 'KeyQ') triggerRoleAction(input, 'deerEat');
+  if (code === 'KeyE') triggerRoleAction(input, 'deerLook');
 }

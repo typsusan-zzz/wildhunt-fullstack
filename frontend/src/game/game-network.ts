@@ -66,6 +66,13 @@ export function connectAuthoritativeGameChannel(options: {
   let inputSeq = 0;
   let lastSentInputKey = '';
   let lastSentInputAt = 0;
+  const lastSentActionSeq = {
+    wolfPounce: 0,
+    wolfScent: 0,
+    deerEat: 0,
+    deerLook: 0,
+    deerCamouflage: 0,
+  };
   let firstSnapshotResolved = false;
   let resolveReady: () => void = () => {};
   let rejectReady: (error: Error) => void = () => {};
@@ -94,30 +101,46 @@ export function connectAuthoritativeGameChannel(options: {
   const inputTimer = window.setInterval(() => {
     if (!options.isPlaying()) return;
     if (options.isCountdownLocked()) return;
-    const inputPayload = {
+    const actionPayload = {
+      wolfPounce: options.input.wolfPounceSeq > lastSentActionSeq.wolfPounce,
+      wolfScent: options.input.wolfScentSeq > lastSentActionSeq.wolfScent,
+      deerEat: options.input.deerEatSeq > lastSentActionSeq.deerEat,
+      deerLook: options.input.deerLookSeq > lastSentActionSeq.deerLook,
+      deerCamouflage: options.input.deerCamouflageSeq > lastSentActionSeq.deerCamouflage,
+    };
+    const movementPayload = {
       forward: options.input.forward,
       back: options.input.back,
       left: options.input.left,
       right: options.input.right,
       sprint: options.input.sprint,
-      wolfPounce: options.input.wolfPounce,
-      wolfScent: options.input.wolfScent,
-      deerEat: options.input.deerEat,
-      deerLook: options.input.deerLook,
-      deerCamouflage: options.input.deerCamouflage,
+    };
+    const inputPayload = {
+      ...movementPayload,
+      ...actionPayload,
     };
     const now = performance.now();
-    const inputKey = JSON.stringify(inputPayload);
-    const hasActiveInput = Object.values(inputPayload).some(Boolean);
-    if (!hasActiveInput && inputKey === lastSentInputKey && now - lastSentInputAt < IDLE_INPUT_HEARTBEAT_MS) return;
-    lastSentInputKey = inputKey;
-    lastSentInputAt = now;
-    gameChannel.send({
+    const inputKey = JSON.stringify(movementPayload);
+    const hasMovementInput = Object.values(movementPayload).some(Boolean);
+    const hasOneShotAction = Object.values(actionPayload).some(Boolean);
+    if (!hasMovementInput && !hasOneShotAction && inputKey === lastSentInputKey && now - lastSentInputAt < IDLE_INPUT_HEARTBEAT_MS) return;
+    const sent = gameChannel.send({
       type: 'PLAYER_INPUT',
       matchId: String(options.matchId),
       seq: ++inputSeq,
       input: inputPayload,
     });
+    if (!sent) {
+      inputSeq -= 1;
+      return;
+    }
+    lastSentInputKey = inputKey;
+    lastSentInputAt = now;
+    if (actionPayload.wolfPounce) lastSentActionSeq.wolfPounce = options.input.wolfPounceSeq;
+    if (actionPayload.wolfScent) lastSentActionSeq.wolfScent = options.input.wolfScentSeq;
+    if (actionPayload.deerEat) lastSentActionSeq.deerEat = options.input.deerEatSeq;
+    if (actionPayload.deerLook) lastSentActionSeq.deerLook = options.input.deerLookSeq;
+    if (actionPayload.deerCamouflage) lastSentActionSeq.deerCamouflage = options.input.deerCamouflageSeq;
   }, 50);
   return {
     ready,

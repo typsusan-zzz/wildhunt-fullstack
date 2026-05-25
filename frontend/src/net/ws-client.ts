@@ -24,7 +24,9 @@ export class WsClient {
   }
 
   send(message: ClientMessage) {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(JSON.stringify(message));
+    return true;
   }
 
   close() {
