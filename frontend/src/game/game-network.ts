@@ -42,6 +42,8 @@ export type ServerGameSnapshot = {
   wolfWin?: boolean;
 };
 
+const IDLE_INPUT_HEARTBEAT_MS = 250;
+
 export function connectAuthoritativeGameChannel(options: {
   matchId?: EntityId;
   input: GameInputState;
@@ -58,6 +60,8 @@ export function connectAuthoritativeGameChannel(options: {
     };
   }
   let inputSeq = 0;
+  let lastSentInputKey = '';
+  let lastSentInputAt = 0;
   let firstSnapshotResolved = false;
   let resolveReady: () => void = () => {};
   let rejectReady: (error: Error) => void = () => {};
@@ -86,22 +90,29 @@ export function connectAuthoritativeGameChannel(options: {
   const inputTimer = window.setInterval(() => {
     if (!options.isPlaying()) return;
     if (options.isCountdownLocked()) return;
+    const inputPayload = {
+      forward: options.input.forward,
+      back: options.input.back,
+      left: options.input.left,
+      right: options.input.right,
+      sprint: options.input.sprint,
+      wolfPounce: options.input.wolfPounce,
+      wolfScent: options.input.wolfScent,
+      deerEat: options.input.deerEat,
+      deerLook: options.input.deerLook,
+      deerCamouflage: options.input.deerCamouflage,
+    };
+    const now = performance.now();
+    const inputKey = JSON.stringify(inputPayload);
+    const hasActiveInput = Object.values(inputPayload).some(Boolean);
+    if (!hasActiveInput && inputKey === lastSentInputKey && now - lastSentInputAt < IDLE_INPUT_HEARTBEAT_MS) return;
+    lastSentInputKey = inputKey;
+    lastSentInputAt = now;
     gameChannel.send({
       type: 'PLAYER_INPUT',
       matchId: String(options.matchId),
       seq: ++inputSeq,
-      input: {
-        forward: options.input.forward,
-        back: options.input.back,
-        left: options.input.left,
-        right: options.input.right,
-        sprint: options.input.sprint,
-        wolfPounce: options.input.wolfPounce,
-        wolfScent: options.input.wolfScent,
-        deerEat: options.input.deerEat,
-        deerLook: options.input.deerLook,
-        deerCamouflage: options.input.deerCamouflage,
-      },
+      input: inputPayload,
     });
   }, 50);
   return {

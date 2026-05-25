@@ -111,7 +111,10 @@ public class GameMatchService {
         MatchSnapshot currentSnapshot = snapshot;
         RuntimeMatch runtime = runtimeMatches.computeIfAbsent(matchId,
                 ignored -> RuntimeMatch.create(currentSnapshot, configInt(currentSnapshot.gameConfig(), "realDeerCount", 1)));
-        GameRealtimeUpdate update = runtime.apply(userId, input == null ? Map.of() : input, currentSnapshot.gameConfig());
+        GameRealtimeUpdate update;
+        synchronized (runtime) {
+            update = runtime.apply(userId, input == null ? Map.of() : input, currentSnapshot.gameConfig());
+        }
         if (update.matchEnded()) {
             settle(matchId, update.wolfWin());
         }

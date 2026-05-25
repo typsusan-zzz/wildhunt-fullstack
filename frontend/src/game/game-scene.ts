@@ -432,6 +432,7 @@ const foodPatches: THREE.Mesh[] = [];
 let gameAudio: GameAudio = createMutedGameAudio();
 let authoritativeConnection: AuthoritativeGameConnection | null = null;
 const serverDeerByUserId = new Map<string, Deer>();
+let latestServerSnapshot: { snapshot: ServerGameSnapshot; players: ServerPlayerState[] } | null = null;
 let allowGameNavigation = false;
 
 window.addEventListener('beforeunload', handleGameBeforeUnload);
@@ -1157,6 +1158,7 @@ function connectAuthoritativeChannel() {
 
 function applyServerSnapshot(snapshot: ServerGameSnapshot, players: ServerPlayerState[]) {
   if (!FORMAL_GAME || match.phase === 'result') return;
+  latestServerSnapshot = { snapshot, players };
   if (typeof snapshot.serverTimeLeft === 'number') match.timeLeft = snapshot.serverTimeLeft;
   if (typeof snapshot.foundReal === 'number') match.foundReal = snapshot.foundReal;
   if (typeof snapshot.realTotal === 'number') match.realTotal = snapshot.realTotal;
@@ -1179,6 +1181,9 @@ function applyServerSnapshot(snapshot: ServerGameSnapshot, players: ServerPlayer
     } else {
       targetDeer.group.visible = true;
       if (targetDeer.state === 'dead') targetDeer.state = 'wander';
+      if (isServerControlledDeer(targetDeer) && !targetDeer.isPlayer) {
+        targetDeer.state = targetDeer.velocity.lengthSq() > 0.04 ? 'wander' : 'pause';
+      }
     }
   }
 }
@@ -1191,12 +1196,19 @@ function applyServerPlayerToObject(object: THREE.Object3D, velocity: THREE.Vecto
   const nextX = Number(player.x);
   const nextZ = Number(player.z);
   const nextYaw = Number(player.yaw ?? object.rotation.y);
-  const previous = tmp.set(object.position.x, object.position.y, object.position.z);
+  const previousX = object.position.x;
+  const previousZ = object.position.z;
   object.position.x = nextX;
   object.position.z = nextZ;
   alignToTerrain(object);
   object.rotation.y = nextYaw + MODEL_FORWARD_YAW_OFFSET;
-  velocity.set(object.position.x - previous.x, 0, object.position.z - previous.z).multiplyScalar(20);
+  const dx = object.position.x - previousX;
+  const dz = object.position.z - previousZ;
+  if (dx * dx + dz * dz < 0.0004) {
+    velocity.set(0, 0, 0);
+  } else {
+    velocity.set(dx, 0, dz).multiplyScalar(20);
+  }
 }
 
 function deerForServerPlayer(player: ServerPlayerState) {
@@ -1221,6 +1233,10 @@ function deerForServerPlayer(player: ServerPlayerState) {
 
 function isLocalServerPlayer(player: ServerPlayerState) {
   return Boolean(LOCAL_USER_ID && String(player.userId) === LOCAL_USER_ID);
+}
+
+function isServerControlledDeer(item: Deer) {
+  return FORMAL_GAME && item.serverUserId !== undefined && item.serverUserId !== null;
 }
 
 function applySkillConfirm(confirm: Record<string, unknown> | undefined) {
@@ -1511,7 +1527,7 @@ function nearbySoftCover(position: THREE.Vector3, radius: number) {
 
 function updateAIDeer(dt: number) {
   for (const item of deer) {
-    if (item.state === 'dead' || item.isPlayer) continue;
+    if (item.state === 'dead' || item.isPlayer || isServerControlledDeer(item)) continue;
     item.stateTime -= dt;
     const distToWolf = item.group.position.distanceTo(wolf.group.position);
     const wasStartled = item.state === 'startled';
@@ -1900,6 +1916,10 @@ function resetRound(role: Role) {
     playerDeer.group.position.set(-10, 0, 4);
     alignToTerrain(playerDeer.group);
     playerDeer.group.rotation.y = input.moveYaw + MODEL_FORWARD_YAW_OFFSET;
+  }
+
+  if (FORMAL_GAME && latestServerSnapshot) {
+    applyServerSnapshot(latestServerSnapshot.snapshot, latestServerSnapshot.players);
   }
 }
 

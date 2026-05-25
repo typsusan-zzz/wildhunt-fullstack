@@ -7,23 +7,27 @@ import com.wildhunt.service.GameMatchService;
 import com.wildhunt.service.GameMatchService.GameRealtimeUpdate;
 import com.wildhunt.service.JwtService;
 import com.wildhunt.service.dto.MatchSnapshot;
+import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
 public class GameWebSocketHandler extends TextWebSocketHandler {
-    private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
+    private static final int SEND_TIME_LIMIT_MS = 10_000;
+    private static final int SEND_BUFFER_SIZE_LIMIT_BYTES = 512 * 1024;
+
+    private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSeq = new ConcurrentHashMap<>();
     private final JwtService jwtService;
     private final GameMatchService gameMatchService;
@@ -49,12 +53,20 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         }
         session.getAttributes().put("userId", userId);
         session.getAttributes().put("matchId", match.matchId());
-        sessions.add(session);
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
-                "type", "GAME_SNAPSHOT",
-                "tick", Instant.now().toEpochMilli(),
-                "match", match,
-                "players", match.players()))));
+        WebSocketSession sendSession = new ConcurrentWebSocketSessionDecorator(
+                session, SEND_TIME_LIMIT_MS, SEND_BUFFER_SIZE_LIMIT_BYTES);
+        sessions.put(session.getId(), sendSession);
+        try {
+            sendJson(sendSession, Map.of(
+                    "type", "GAME_SNAPSHOT",
+                    "tick", Instant.now().toEpochMilli(),
+                    "match", match,
+                    "players", match.players()));
+        } catch (Exception ex) {
+            sessions.remove(session.getId(), sendSession);
+            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("SEND_FAILED"));
+            throw ex;
+        }
     }
 
     @Override
@@ -97,15 +109,40 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        sessions.remove(session);
+        sessions.remove(session.getId());
+        Long userId = attrLong(session, "userId");
+        Long matchId = attrLong(session, "matchId");
+        if (userId != null && matchId != null) {
+            lastSeq.remove(userId + ":" + matchId);
+        }
     }
 
     private void broadcast(Long matchId, Map<String, Object> payload) throws Exception {
         String encoded = objectMapper.writeValueAsString(payload);
-        for (WebSocketSession target : sessions) {
-            if (!target.isOpen()) continue;
+        for (WebSocketSession target : sessions.values()) {
+            if (!target.isOpen()) {
+                sessions.remove(target.getId(), target);
+                continue;
+            }
             if (!matchId.equals(attrLong(target, "matchId"))) continue;
-            target.sendMessage(new TextMessage(encoded));
+            try {
+                target.sendMessage(new TextMessage(encoded));
+            } catch (Exception ignored) {
+                sessions.remove(target.getId(), target);
+                closeQuietly(target, CloseStatus.SERVER_ERROR.withReason("SEND_FAILED"));
+            }
+        }
+    }
+
+    private void sendJson(WebSocketSession session, Map<String, Object> payload) throws Exception {
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
+    }
+
+    private static void closeQuietly(WebSocketSession session, CloseStatus status) {
+        try {
+            if (session.isOpen()) session.close(status);
+        } catch (IOException ignored) {
+            // Ignore close failures while cleaning up a broken WebSocket session.
         }
     }
 
