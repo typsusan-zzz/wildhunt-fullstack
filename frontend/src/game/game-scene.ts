@@ -15,6 +15,7 @@ import { formatTime, lerpAngle, randomPoint, randomRange, randomRingPoint, seede
 import { connectAuthoritativeGameChannel, type AuthoritativeGameConnection, type ServerGameSnapshot, type ServerPlayerState } from './game-network';
 import { NatureBatcher } from './game-nature-batcher';
 import { ScentTrailSystem } from './game-scent';
+import { SmokeVfxSystem } from './game-smoke-vfx';
 import type {
   AnimalAnimator,
   AnimalClip,
@@ -88,8 +89,8 @@ const BITE_COOLDOWN_SECONDS = runtimeConfig.biteCooldownSeconds;
 const BITE_LOCK_SECONDS = runtimeConfig.biteLockSeconds;
 const BITE_IMPACT_SECONDS = runtimeConfig.biteImpactSeconds;
 const SCENT_DURATION_SECONDS = runtimeConfig.scentDurationSeconds;
-const DEER_CAMOUFLAGE_DURATION_SECONDS = runtimeConfig.deerCamouflageDurationSeconds;
-const DEER_CAMOUFLAGE_COOLDOWN_SECONDS = runtimeConfig.deerCamouflageCooldownSeconds;
+const DEER_DECOY_LIFETIME_SECONDS = 5.2;
+const DEER_DECOY_SMOKE_SECONDS = 1.2;
 const DEER_LOOK_DURATION_SECONDS = runtimeConfig.deerLookDurationSeconds;
 const DEER_LOOK_COOLDOWN_SECONDS = runtimeConfig.deerLookCooldownSeconds;
 const DEER_EAT_DURATION_SECONDS = runtimeConfig.deerEatDurationSeconds;
@@ -323,6 +324,9 @@ const spatialHash = new SpatialHash(10);
 const debugColliderGroup = new THREE.Group();
 const terrainSampler = new TerrainSampler((x, z) => terrainSurfaceHeightAt(x, z), ARENA_RADIUS, MAX_WALKABLE_SLOPE);
 const scentTrailSystem = new ScentTrailSystem(scene, terrainSampler, windUniforms, randomRange);
+const smokeVfx = new SmokeVfxSystem(scene);
+let deerModelTemplate: THREE.Object3D | null = null;
+let deerAnimationClips: THREE.AnimationClip[] = [];
 
 const natureAssetSpecs: Record<NatureCategory, NatureAssetSpec[]> = {
   tree: [
@@ -400,6 +404,7 @@ const match: MatchState = {
   mistakes: 0,
   stamina: 100,
   scentUsed: false,
+  deerDecoyUsed: false,
   resultTitle: '',
   resultDetail: '',
 };
@@ -1008,16 +1013,30 @@ async function loadGameModels() {
     const template = gltf.scene;
     prepareModel(template);
     normalizeModel(template, 2.05, 0);
+    deerModelTemplate = template;
+    deerAnimationClips = gltf.animations;
     for (const item of deer) {
-      const shell = item.group.getObjectByName('procedural-shell');
-      if (shell) shell.visible = false;
-      const model = cloneSkeleton(template);
-      setupAnimalAnimator(item.group, model, gltf.animations, 'deer');
-      item.group.add(model);
+      attachDeerModel(item);
     }
     resolve();
   }, undefined, reject)),
   ]);
+}
+
+function attachDeerModel(item: Deer) {
+  if (!deerModelTemplate) return;
+  const shell = item.group.getObjectByName('procedural-shell');
+  if (shell) shell.visible = false;
+  const model = cloneSkeleton(deerModelTemplate);
+  setupAnimalAnimator(item.group, model, deerAnimationClips, 'deer');
+  item.group.add(model);
+}
+
+function createExtraDeer(point: THREE.Vector3) {
+  const item = createDeer(deer.length, point);
+  attachDeerModel(item);
+  deer.push(item);
+  return item;
 }
 
 function loadModel(url: string, target: THREE.Group, height: number, yRotation: number, kind: AnimalKind) {
@@ -1164,8 +1183,10 @@ function applyServerSnapshot(snapshot: ServerGameSnapshot, players: ServerPlayer
   if (typeof snapshot.realTotal === 'number') match.realTotal = snapshot.realTotal;
   if (typeof snapshot.mistakes === 'number') match.mistakes = snapshot.mistakes;
   applySkillConfirm(snapshot.skillConfirm);
+  const seenServerIds = new Set<string>();
   for (const player of players) {
     if (!hasServerPosition(player)) continue;
+    seenServerIds.add(String(player.userId));
     if (player.roleType === 'WOLF') {
       applyServerPlayerToObject(wolf.group, wolf.velocity, player);
       if (player.dead) wolf.group.visible = false;
@@ -1185,6 +1206,14 @@ function applyServerSnapshot(snapshot: ServerGameSnapshot, players: ServerPlayer
         targetDeer.state = targetDeer.velocity.lengthSq() > 0.04 ? 'wander' : 'pause';
       }
     }
+    if (isLocalServerPlayer(player) && typeof player.deerDecoyUsed === 'boolean') {
+      match.deerDecoyUsed = player.deerDecoyUsed;
+    }
+  }
+  for (const [serverId, item] of serverDeerByUserId.entries()) {
+    if (seenServerIds.has(serverId) || !item.isDecoy) continue;
+    hideDecoy(item);
+    serverDeerByUserId.delete(serverId);
   }
 }
 
@@ -1219,13 +1248,22 @@ function deerForServerPlayer(player: ServerPlayerState) {
   if (!item) {
     item = deer.find((candidate) => !candidate.serverUserId && (!candidate.isPlayer || isLocalServerPlayer(player)));
   }
+  if (!item && player.decoy) item = createExtraDeer(new THREE.Vector3(Number(player.x), 0, Number(player.z)));
   if (!item) return null;
   item.serverUserId = player.userId;
-  item.isReal = !player.ai;
+  item.isDecoy = Boolean(player.decoy);
+  item.decoyOwnerUserId = player.ownerUserId;
+  if (!item.isDecoy) {
+    item.decoyExpireAt = undefined;
+    item.decoyOwnerUserId = undefined;
+  }
+  item.isReal = !player.ai && !item.isDecoy;
   if (isLocalServerPlayer(player)) {
     if (playerDeer && playerDeer !== item) playerDeer.isPlayer = false;
     playerDeer = item;
     item.isPlayer = true;
+  } else if (item.isDecoy) {
+    item.isPlayer = false;
   }
   serverDeerByUserId.set(key, item);
   return item;
@@ -1241,6 +1279,32 @@ function isServerControlledDeer(item: Deer) {
 
 function applySkillConfirm(confirm: Record<string, unknown> | undefined) {
   if (!confirm || typeof confirm.type !== 'string') return;
+  if (confirm.type === 'WOLF_POUNCE' && confirm.decoyHit) {
+    const target = decoyByServerId(confirm.targetUserId);
+    if (target) {
+      emitSmokeAt(target.group.position);
+      hideDecoy(target);
+      serverDeerByUserId.delete(String(confirm.targetUserId));
+    }
+    setHuntTip('\u6251\u4e2d\u4e86\u5206\u8eab', 1.4);
+    gameAudio.playCue('pounce');
+    return;
+  }
+  if (confirm.type === 'DEER_DECOY') {
+    if (confirm.confirmed) {
+      match.deerDecoyUsed = true;
+      const x = Number(confirm.x);
+      const z = Number(confirm.z);
+      if (Number.isFinite(x) && Number.isFinite(z)) emitSmokeAtXZ(x, z);
+      else if (playerDeer) emitSmokeAt(playerDeer.group.position);
+      gameAudio.playCue('camouflage');
+      setHuntTip('\u70df\u96fe\u5206\u8eab\u53d1\u52a8\uff1a\u5206\u8eab\u6b63\u5728\u5e72\u6270\u72fc', 1.8);
+    } else if (confirm.reason === 'USED') {
+      match.deerDecoyUsed = true;
+      setHuntTip('\u672c\u5c40\u5206\u8eab\u5df2\u7528\u5b8c', 1.3);
+    }
+    return;
+  }
   if (confirm.type === 'WOLF_POUNCE' && confirm.confirmed) {
     setHuntTip(confirm.hit ? '服务器确认：扑咬命中' : '服务器确认：扑空', 1.2);
     gameAudio.playCue(confirm.hit ? 'hit' : 'pounce');
@@ -1258,14 +1322,42 @@ function setHuntTip(text: string, holdSeconds = 1) {
   huntTipHold = Math.max(huntTipHold, holdSeconds);
 }
 
+function decoyByServerId(serverUserId: unknown) {
+  return serverDeerByUserId.get(String(serverUserId));
+}
+
+function emitSmokeAt(position: THREE.Vector3) {
+  emitSmokeAtXZ(position.x, position.z);
+}
+
+function emitSmokeAtXZ(x: number, z: number) {
+  smokeVfx.emit(new THREE.Vector3(x, terrainSampler.sampleHeight(x, z) + 0.24, z), {
+    count: 34,
+    radius: 2.2,
+    duration: DEER_DECOY_SMOKE_SECONDS,
+  });
+}
+
+function hideDecoy(item: Deer) {
+  item.group.visible = false;
+  item.velocity.set(0, 0, 0);
+  item.state = 'dead';
+  item.isDecoy = false;
+  item.decoyExpireAt = undefined;
+  item.decoyOwnerUserId = undefined;
+  item.serverUserId = undefined;
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.033);
+  smokeVfx.update(dt);
   if (match.phase === 'playing') {
     updateMatch(dt);
     updatePlayerActor(dt);
     if (!FORMAL_GAME && match.role === 'deer') updateEnemyWolfAI(dt);
     updateAIDeer(dt);
+    updateLocalDecoys(dt);
     if (!FORMAL_GAME) handleWolfDeerCollision();
     updateAnimalAnimations(dt);
     scentTrailSystem.update(dt);
@@ -1385,25 +1477,19 @@ function updateDeerPlayerActions(dt: number, isMoving: boolean, sprinting: boole
   deerLookTimer = Math.max(0, deerLookTimer - dt);
   deerLookCooldown = Math.max(0, deerLookCooldown - dt);
   deerEatTimer = Math.max(0, deerEatTimer - dt);
-  const stillEnough = !isMoving && playerDeer.velocity.lengthSq() < 0.3;
   const wolfDistance = wolf.group.position.distanceTo(playerDeer.group.position);
   if (deerEatTimer > 0 && isMoving) {
     deerEatTimer = 0;
     setHuntTip('\u79fb\u52a8\u6253\u65ad\u4e86\u8fdb\u98df', 1.0);
   }
-  if (deerCamouflageTimer > 0 && (!stillEnough || wolfDistance < 5)) {
-    deerCamouflageTimer = 0;
-    setHuntTip(wolfDistance < 5 ? '\u72fc\u592a\u8fd1\uff0c\u4f2a\u88c5\u88ab\u8bc6\u7834' : '\u52a8\u4f5c\u592a\u5927\uff0c\u4f2a\u88c5\u5931\u6548', 1.4);
-  }
-  if (input.deerCamouflage && deerCamouflageCooldown <= 0 && stillEnough) {
-    deerCamouflageTimer = DEER_CAMOUFLAGE_DURATION_SECONDS;
-    deerCamouflageCooldown = DEER_CAMOUFLAGE_COOLDOWN_SECONDS;
-    gameAudio.playCue('camouflage');
-    setHuntTip('\u4f2a\u88c5\u4e2d\uff1a\u72fc\u6682\u65f6\u5931\u53bb\u9501\u5b9a', 1.8);
-  } else if (input.deerCamouflage && deerCamouflageCooldown > 0) {
-    setHuntTip(`\u4f2a\u88c5\u51b7\u5374\u4e2d ${deerCamouflageCooldown.toFixed(0)}s`, 1.0);
-  } else if (input.deerCamouflage) {
-    setHuntTip('\u4f2a\u88c5\u9700\u8981\u4f4e\u901f\u6216\u9759\u6b62', 1.0);
+  if (input.deerCamouflage) {
+    if (match.deerDecoyUsed) {
+      setHuntTip('\u672c\u5c40\u5206\u8eab\u5df2\u7528\u5b8c', 1.2);
+    } else if (FORMAL_GAME) {
+      setHuntTip('\u70df\u96fe\u5206\u8eab\u51c6\u5907\u53d1\u52a8', 0.8);
+    } else {
+      activateLocalDeerDecoy();
+    }
   }
   if (input.deerLook && deerLookCooldown <= 0) {
     deerLookTimer = DEER_LOOK_DURATION_SECONDS;
@@ -1443,9 +1529,6 @@ function updateDeerPlayerActions(dt: number, isMoving: boolean, sprinting: boole
   } else if (deerLookTimer > 0) {
     playerDeer.state = 'look';
     playerDeer.velocity.multiplyScalar(Math.pow(0.04, dt));
-  } else if (deerCamouflageTimer > 0) {
-    playerDeer.state = 'pause';
-    playerDeer.velocity.multiplyScalar(Math.pow(0.01, dt));
   } else if (isMoving) {
     playerDeer.state = sprinting ? 'startled' : 'wander';
   } else {
@@ -1470,7 +1553,7 @@ function countNearbyAIDeer(position: THREE.Vector3, radius: number, state?: Deer
   let count = 0;
   const radiusSq = radius * radius;
   for (const item of deer) {
-    if (item.isPlayer || item.state === 'dead') continue;
+    if (item.isPlayer || item.isDecoy || item.state === 'dead') continue;
     if (state && item.state !== state) continue;
     if (item.group.position.distanceToSquared(position) <= radiusSq) count += 1;
   }
@@ -1480,10 +1563,73 @@ function countNearbyAIDeer(position: THREE.Vector3, radius: number, state?: Deer
 function startleNearbyDeer(position: THREE.Vector3, radius: number) {
   const radiusSq = radius * radius;
   for (const item of deer) {
-    if (item.isPlayer || item.state === 'dead') continue;
+    if (item.isPlayer || item.isDecoy || item.state === 'dead') continue;
     if (item.group.position.distanceToSquared(position) > radiusSq) continue;
     item.state = 'startled';
     item.stateTime = randomRange(0.9, 1.8);
+  }
+}
+
+function activateLocalDeerDecoy() {
+  if (!playerDeer || match.deerDecoyUsed) {
+    setHuntTip('\u672c\u5c40\u5206\u8eab\u5df2\u7528\u5b8c', 1.2);
+    return;
+  }
+  match.deerDecoyUsed = true;
+  gameAudio.playCue('camouflage');
+  emitSmokeAt(playerDeer.group.position);
+  spawnLocalDecoy(input.moveYaw + 0.9);
+  spawnLocalDecoy(input.moveYaw - 0.9);
+  setHuntTip('\u70df\u96fe\u5206\u8eab\u5df2\u4f7f\u7528', 1.6);
+}
+
+function spawnLocalDecoy(yaw: number) {
+  if (!playerDeer) return;
+  const item = availableDecoyDeer();
+  item.group.visible = true;
+  item.group.position.copy(playerDeer.group.position);
+  alignToTerrain(item.group);
+  item.group.rotation.y = yaw + MODEL_FORWARD_YAW_OFFSET;
+  item.velocity.set(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(DEER_SPRINT_SPEED);
+  item.state = 'startled';
+  item.stateTime = DEER_DECOY_LIFETIME_SECONDS;
+  item.wanderAngle = yaw;
+  item.hunger = playerDeer.hunger;
+  item.suspicion = 0;
+  item.isReal = false;
+  item.isPlayer = false;
+  item.isDecoy = true;
+  item.decoyOwnerUserId = LOCAL_USER_ID || undefined;
+  item.decoyExpireAt = performance.now() + DEER_DECOY_LIFETIME_SECONDS * 1000;
+}
+
+function availableDecoyDeer() {
+  const item = deer.find((candidate) => (
+    candidate.isDecoy ||
+    (!candidate.isPlayer && !candidate.isReal && !candidate.serverUserId && candidate.state !== 'dead')
+  ));
+  return item ?? createExtraDeer(playerDeer?.group.position ?? randomPoint(DEER_SPAWN_RADIUS));
+}
+
+function updateLocalDecoys(dt: number) {
+  const now = performance.now();
+  for (const item of deer) {
+    if (!item.isDecoy || isServerControlledDeer(item)) continue;
+    if ((item.decoyExpireAt ?? 0) <= now || item.state === 'dead') {
+      hideDecoy(item);
+      continue;
+    }
+    item.velocity.set(Math.sin(item.wanderAngle), 0, Math.cos(item.wanderAngle)).multiplyScalar(DEER_SPRINT_SPEED);
+    moveActorWithCollision(item.group, item.velocity, dt, {
+      radius: DEER_RADIUS,
+      height: 1.7,
+      maxStepUp: DEER_STEP_UP,
+      maxDropDown: DEER_DROP_DOWN,
+      maxSlope: MAX_WALKABLE_SLOPE,
+      arenaRadius: DEER_WANDER_ARENA_RADIUS,
+      ignore: item.group,
+    });
+    if (item.velocity.lengthSq() > 0.04) item.group.rotation.y = yawFromDirection(item.velocity);
   }
 }
 
@@ -1527,7 +1673,7 @@ function nearbySoftCover(position: THREE.Vector3, radius: number) {
 
 function updateAIDeer(dt: number) {
   for (const item of deer) {
-    if (item.state === 'dead' || item.isPlayer || isServerControlledDeer(item)) continue;
+    if (item.state === 'dead' || item.isPlayer || item.isDecoy || isServerControlledDeer(item)) continue;
     item.stateTime -= dt;
     const distToWolf = item.group.position.distanceTo(wolf.group.position);
     const wasStartled = item.state === 'startled';
@@ -1654,6 +1800,13 @@ function updateBiteSequence(dt: number) {
 
 function resolveBiteResult(target: Deer) {
   if (target.state === 'dead') return;
+  if (target.isDecoy) {
+    emitSmokeAt(target.group.position);
+    hideDecoy(target);
+    gameAudio.playCue('pounce');
+    setHuntTip('\u6251\u4e2d\u4e86\u5206\u8eab', 1.4);
+    return;
+  }
   target.state = 'dead';
   playAnimalClip(target.group, 'death', 0.08);
   setTimeout(() => {
@@ -1772,11 +1925,9 @@ function updateHud() {
       const sensed = deerLookTimer > 0 ? deerWolfDirectionHint() : wolfDistance < 18 ? '\u72fc\u5f88\u8fd1' : '\u6ca1\u6709\u660e\u663e\u72fc\u8ff9';
       const state = deerEatTimer > 0
         ? '\u8fdb\u98df\u4e2d'
-        : deerCamouflageTimer > 0
-          ? '\u4f2a\u88c5\u4e2d\uff1a\u72fc\u6682\u65f6\u5931\u53bb\u9501\u5b9a'
           : deerLookTimer > 0
             ? '\u73af\u987e\u4e2d'
-            : `\u4f2a\u88c5 ${deerCamouflageCooldown > 0 ? deerCamouflageCooldown.toFixed(0) + 's' : '\u53ef\u7528'} / \u73af\u987e ${deerLookCooldown > 0 ? deerLookCooldown.toFixed(0) + 's' : '\u53ef\u7528'}`;
+            : `\u70df\u96fe\u5206\u8eab ${match.deerDecoyUsed ? '\u5df2\u4f7f\u7528' : '\u53ef\u7528'} / \u73af\u987e ${deerLookCooldown > 0 ? deerLookCooldown.toFixed(0) + 's' : '\u53ef\u7528'}`;
       huntTip.textContent = `\u9965\u997f ${Math.round(playerDeer.hunger)} / \u53ef\u7591 ${Math.round(playerDeer.suspicion)}\uff1b${sensed}\uff1b${state}`;
     }
   }
@@ -1838,7 +1989,7 @@ function configureRoleUI(role: Role) {
       <span>W/S \u524d\u540e\u79fb\u52a8</span>
       <span>A/D \u6216 \u2190/\u2192 \u6301\u7eed\u8f6c\u5411</span>
       <span>Shift \u5c0f\u8dd1\uff0c\u4f1a\u589e\u52a0\u53ef\u7591\u5ea6</span>
-      <span>Space \u4f2a\u88c5\u9759\u6b62</span>
+      <span>Space \u70df\u96fe\u5206\u8eab\uff08\u4e00\u5c40\u4e00\u6b21\uff09</span>
       <span>Q \u8fdb\u98df</span>
       <span>E \u73af\u987e / \u89c2\u5bdf\u72fc</span>
       <span>F \u8c03\u8bd5\u78b0\u649e</span>
@@ -1846,7 +1997,7 @@ function configureRoleUI(role: Role) {
     sprintBtn.textContent = '\u5c0f\u8dd1';
     trackBtn.textContent = '\u8fdb\u98df';
     lookBtn.textContent = '\u73af\u987e';
-    attackBtn.textContent = '\u4f2a\u88c5';
+    attackBtn.textContent = '\u5206\u8eab';
   }
 }
 
@@ -1860,6 +2011,7 @@ function resetRound(role: Role) {
   match.mistakes = 0;
   match.stamina = 100;
   match.scentUsed = false;
+  match.deerDecoyUsed = false;
   countdownUntil = performance.now() + 3000;
   huntTip.textContent = role === 'wolf' ? '\u6c14\u5473\u8ffd\u8e2a\uff1a1 / 1' : '\u9965\u997f\u3001\u53ef\u7591\u5ea6\u548c\u72fc\u8ddd\u79bb\u662f\u4f60\u7684\u5173\u952e\u4fe1\u606f';
   huntTipHold = 0;
@@ -1872,6 +2024,7 @@ function resetRound(role: Role) {
   deerSprintTimer = 0;
   scentActiveTimer = 0;
   scentTarget = null;
+  smokeVfx.clear();
   configureRoleUI(role);
   wolf.group.position.set(0, 0, 22);
   alignToTerrain(wolf.group);
@@ -1903,6 +2056,9 @@ function resetRound(role: Role) {
     item.suspicion = 0;
     item.isReal = false;
     item.isPlayer = false;
+    item.isDecoy = false;
+    item.decoyExpireAt = undefined;
+    item.decoyOwnerUserId = undefined;
     item.markedUntil = 0;
   }
 
@@ -1976,6 +2132,7 @@ function returnToLobby() {
   window.removeEventListener('beforeunload', handleGameBeforeUnload);
   authoritativeConnection?.close();
   clearHeldInput(input);
+  smokeVfx.dispose();
   gameAudio.stop();
   window.sessionStorage.removeItem(MATCH_OPTIONS_KEY);
   delete (window as unknown as { __wildhuntGameOptions?: GameStartOptions }).__wildhuntGameOptions;

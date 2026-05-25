@@ -1,6 +1,7 @@
 package com.wildhunt.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,6 +9,7 @@ import com.wildhunt.common.enums.RoleType;
 import com.wildhunt.service.dto.UserProfile;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -35,6 +37,37 @@ class GameMatchServiceTest {
         assertNull(gameMatchService.current(deer));
         assertEquals(1, userService.getOrCreate(wolf).totalWins());
         assertEquals(0, userService.getOrCreate(deer).totalWins());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void deerDecoyCanOnlyBeUsedOnceAndDoesNotChangeTargetCount() {
+        UserService userService = new UserService();
+        GameMatchService gameMatchService = new GameMatchService(userService);
+        long wolf = userService.createGuestUser().userId();
+        long deer = userService.createGuestUser().userId();
+        var match = gameMatchService.createMatch(null, List.of(
+                new GameMatchService.PlayerAssignment(wolf, RoleType.WOLF),
+                new GameMatchService.PlayerAssignment(deer, RoleType.DEER)
+        ), 16);
+
+        var first = gameMatchService.applyInput(match.matchId(), deer, Map.of("deerCamouflage", true));
+        Map<String, Object> firstConfirm = (Map<String, Object>) first.snapshot().get("skillConfirm");
+        List<Map<String, Object>> firstPlayers = (List<Map<String, Object>>) first.snapshot().get("players");
+
+        assertEquals("DEER_DECOY", firstConfirm.get("type"));
+        assertEquals(true, firstConfirm.get("confirmed"));
+        assertEquals(2, firstPlayers.stream().filter(player -> Boolean.TRUE.equals(player.get("decoy"))).count());
+        assertEquals(0, first.snapshot().get("foundReal"));
+        assertEquals(1, first.snapshot().get("realTotal"));
+
+        var repeated = gameMatchService.applyInput(match.matchId(), deer, Map.of("deerCamouflage", true));
+        Map<String, Object> repeatConfirm = (Map<String, Object>) repeated.snapshot().get("skillConfirm");
+
+        assertEquals("DEER_DECOY", repeatConfirm.get("type"));
+        assertEquals(false, repeatConfirm.get("confirmed"));
+        assertEquals("USED", repeatConfirm.get("reason"));
+        assertFalse(repeated.matchEnded());
     }
 
     @Test

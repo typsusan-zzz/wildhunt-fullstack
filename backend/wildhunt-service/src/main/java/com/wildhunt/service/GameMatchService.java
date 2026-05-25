@@ -365,8 +365,10 @@ public class GameMatchService {
     private static final class RuntimeMatch {
         private final long startedAtMs = System.currentTimeMillis();
         private final Map<Long, RuntimePlayer> players = new ConcurrentHashMap<>();
+        private final Map<Long, RuntimeDecoy> decoys = new ConcurrentHashMap<>();
         private final java.util.Set<Long> targetDeer = ConcurrentHashMap.newKeySet();
         private final java.util.Set<Long> deadTargets = ConcurrentHashMap.newKeySet();
+        private long nextDecoyId = -900_000_000L;
         private volatile boolean ended;
         private volatile boolean wolfWin;
         private int mistakes;
@@ -409,6 +411,7 @@ public class GameMatchService {
                 player.z = player.z / distance * arena;
             }
             tickAi(dt, config);
+            tickDecoys(dt, config);
             Map<String, Object> confirm = confirmSkill(player, input, config);
             checkTimeout(config);
             return new GameRealtimeUpdate(snapshot(config, confirm), ended, wolfWin);
@@ -446,15 +449,29 @@ public class GameMatchService {
                         "distance", nearest == null ? -1 : Math.round(distance(player, nearest)));
             }
             if (player.role == RoleType.WOLF && bool(input, "wolfPounce")) {
-                RuntimePlayer target = nearestLiveTarget(player);
-                if (target != null && distance(player, target) <= 6.5) {
-                    deadTargets.add(target.userId);
-                    target.dead = true;
+                PounceCandidate target = nearestPounceCandidate(player);
+                if (target != null && target.distance() <= 6.5) {
+                    if (target.decoy() != null) {
+                        RuntimeDecoy decoy = target.decoy();
+                        decoy.dead = true;
+                        decoys.remove(decoy.userId);
+                        return Map.of(
+                                "type", "WOLF_POUNCE",
+                                "confirmed", true,
+                                "hit", false,
+                                "decoyHit", true,
+                                "targetUserId", decoy.userId,
+                                "detail", "DECOY_DISPELLED"
+                        );
+                    }
+                    RuntimePlayer realTarget = target.player();
+                    deadTargets.add(realTarget.userId);
+                    realTarget.dead = true;
                     if (deadTargets.containsAll(targetDeer)) {
                         ended = true;
                         wolfWin = true;
                     }
-                    return Map.of("type", "WOLF_POUNCE", "confirmed", true, "hit", true, "targetUserId", target.userId);
+                    return Map.of("type", "WOLF_POUNCE", "confirmed", true, "hit", true, "targetUserId", realTarget.userId);
                 }
                 mistakes++;
                 return Map.of("type", "WOLF_POUNCE", "confirmed", true, "hit", false, "mistakes", mistakes);
@@ -468,10 +485,55 @@ public class GameMatchService {
                 return Map.of("type", "DEER_EAT", "confirmed", true, "foodEaten", player.foodEaten);
             }
             if (player.role == RoleType.DEER && bool(input, "deerCamouflage")) {
-                player.camouflageUntilMs = System.currentTimeMillis() + Math.round(configDouble(config, "deerCamouflageDurationSeconds", 3) * 1000);
-                return Map.of("type", "DEER_CAMOUFLAGE", "confirmed", true, "until", player.camouflageUntilMs);
+                if (player.deerDecoyUsed) {
+                    return Map.of("type", "DEER_DECOY", "confirmed", false, "reason", "USED");
+                }
+                if (player.dead || ended) {
+                    return Map.of("type", "DEER_DECOY", "confirmed", false, "reason", player.dead ? "DEAD" : "ENDED");
+                }
+                long now = System.currentTimeMillis();
+                long smokeUntil = now + 1200;
+                long expireAt = now + 5200;
+                double speed = Math.max(configDouble(config, "deerSprintSpeed", 11.2), configDouble(config, "deerBaseSpeed", 7) * 1.45);
+                RuntimeDecoy left = createDecoy(player, player.yaw + 0.9, speed, expireAt);
+                RuntimeDecoy right = createDecoy(player, player.yaw - 0.9, speed, expireAt);
+                player.deerDecoyUsed = true;
+                player.decoySmokeUntilMs = smokeUntil;
+                return Map.of(
+                        "type", "DEER_DECOY",
+                        "confirmed", true,
+                        "ownerUserId", player.userId,
+                        "x", player.x,
+                        "z", player.z,
+                        "smokeUntil", smokeUntil,
+                        "decoyIds", List.of(left.userId, right.userId)
+                );
             }
             return Map.of();
+        }
+
+        private RuntimeDecoy createDecoy(RuntimePlayer owner, double yaw, double speed, long expireAtMs) {
+            RuntimeDecoy decoy = new RuntimeDecoy(nextDecoyId--, owner.userId, owner.x, owner.z, yaw, speed, expireAtMs);
+            decoys.put(decoy.userId, decoy);
+            return decoy;
+        }
+
+        private void tickDecoys(double dt, Map<String, Object> config) {
+            long now = System.currentTimeMillis();
+            double arena = configDouble(config, "arenaRadius", 142);
+            for (RuntimeDecoy decoy : new ArrayList<>(decoys.values())) {
+                if (decoy.dead || now >= decoy.expireAtMs) {
+                    decoys.remove(decoy.userId, decoy);
+                    continue;
+                }
+                decoy.x += Math.sin(decoy.yaw) * decoy.speed * dt;
+                decoy.z += Math.cos(decoy.yaw) * decoy.speed * dt;
+                double distance = Math.hypot(decoy.x, decoy.z);
+                if (distance > arena) {
+                    decoy.x = decoy.x / distance * arena;
+                    decoy.z = decoy.z / distance * arena;
+                }
+            }
         }
 
         private void checkTimeout(Map<String, Object> config) {
@@ -490,7 +552,13 @@ public class GameMatchService {
             result.put("foundReal", deadTargets.size());
             result.put("realTotal", targetDeer.size());
             result.put("mistakes", mistakes);
-            result.put("players", players.values().stream().map(RuntimePlayer::toMap).toList());
+            List<Map<String, Object>> playerStates = new ArrayList<>(players.values().stream().map(RuntimePlayer::toMap).toList());
+            long now = System.currentTimeMillis();
+            playerStates.addAll(decoys.values().stream()
+                    .filter(decoy -> !decoy.dead && now < decoy.expireAtMs)
+                    .map(RuntimeDecoy::toMap)
+                    .toList());
+            result.put("players", playerStates);
             result.put("skillConfirm", skillConfirm == null ? Map.of() : skillConfirm);
             result.put("matchEnded", ended);
             result.put("wolfWin", wolfWin);
@@ -507,6 +575,27 @@ public class GameMatchService {
                 if (nextDistance < bestDistance) {
                     best = target;
                     bestDistance = nextDistance;
+                }
+            }
+            return best;
+        }
+
+        private PounceCandidate nearestPounceCandidate(RuntimePlayer origin) {
+            PounceCandidate best = null;
+            for (Long targetId : new HashSet<>(targetDeer)) {
+                RuntimePlayer target = players.get(targetId);
+                if (target == null || target.dead) continue;
+                double nextDistance = distance(origin, target);
+                if (best == null || nextDistance < best.distance()) {
+                    best = new PounceCandidate(target, null, nextDistance);
+                }
+            }
+            long now = System.currentTimeMillis();
+            for (RuntimeDecoy decoy : decoys.values()) {
+                if (decoy.dead || now >= decoy.expireAtMs) continue;
+                double nextDistance = decoy.distance(origin);
+                if (best == null || nextDistance < best.distance()) {
+                    best = new PounceCandidate(null, decoy, nextDistance);
                 }
             }
             return best;
@@ -547,6 +636,8 @@ public class GameMatchService {
         boolean dead;
         int foodEaten;
         long camouflageUntilMs;
+        boolean deerDecoyUsed;
+        long decoySmokeUntilMs;
 
         RuntimePlayer(long userId, String nickname, RoleType role, boolean ai, double x, double z, double yaw) {
             this.userId = userId;
@@ -569,16 +660,60 @@ public class GameMatchService {
         }
 
         Map<String, Object> toMap() {
+            Map<String, Object> result = new HashMap<>();
+            result.put("userId", userId);
+            result.put("nickname", nickname);
+            result.put("roleType", role.name());
+            result.put("ai", ai);
+            result.put("x", x);
+            result.put("z", z);
+            result.put("yaw", yaw);
+            result.put("dead", dead);
+            result.put("camouflageUntil", camouflageUntilMs);
+            result.put("deerDecoyUsed", deerDecoyUsed);
+            result.put("decoySmokeUntil", decoySmokeUntilMs);
+            return result;
+        }
+    }
+
+    private record PounceCandidate(RuntimePlayer player, RuntimeDecoy decoy, double distance) {
+    }
+
+    private static final class RuntimeDecoy {
+        final long userId;
+        final long ownerUserId;
+        double x;
+        double z;
+        double yaw;
+        final double speed;
+        final long expireAtMs;
+        boolean dead;
+
+        RuntimeDecoy(long userId, long ownerUserId, double x, double z, double yaw, double speed, long expireAtMs) {
+            this.userId = userId;
+            this.ownerUserId = ownerUserId;
+            this.x = x;
+            this.z = z;
+            this.yaw = yaw;
+            this.speed = speed;
+            this.expireAtMs = expireAtMs;
+        }
+
+        double distance(RuntimePlayer player) {
+            return Math.hypot(x - player.x, z - player.z);
+        }
+
+        Map<String, Object> toMap() {
             return Map.of(
                     "userId", userId,
-                    "nickname", nickname,
-                    "roleType", role.name(),
-                    "ai", ai,
+                    "ownerUserId", ownerUserId,
+                    "roleType", RoleType.DEER.name(),
+                    "ai", true,
+                    "decoy", true,
                     "x", x,
                     "z", z,
                     "yaw", yaw,
-                    "dead", dead,
-                    "camouflageUntil", camouflageUntilMs
+                    "dead", false
             );
         }
     }

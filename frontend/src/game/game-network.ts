@@ -29,6 +29,10 @@ export type ServerPlayerState = {
   yaw?: number;
   dead?: boolean;
   camouflageUntil?: number;
+  deerDecoyUsed?: boolean;
+  decoySmokeUntil?: number;
+  decoy?: boolean;
+  ownerUserId?: EntityId;
 };
 
 export type ServerGameSnapshot = {

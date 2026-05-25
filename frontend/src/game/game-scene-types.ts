@@ -65,6 +65,9 @@ export type Deer = {
   suspicion: number;
   isReal: boolean;
   isPlayer: boolean;
+  isDecoy?: boolean;
+  decoyExpireAt?: number;
+  decoyOwnerUserId?: EntityId;
   markedUntil: number;
 };
 
@@ -78,6 +81,7 @@ export type MatchState = {
   mistakes: number;
   stamina: number;
   scentUsed: boolean;
+  deerDecoyUsed: boolean;
   resultTitle: string;
   resultDetail: string;
 };
