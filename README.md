@@ -12,7 +12,8 @@
 
 - 推荐入口：<https://wildhunt-backend-production.up.railway.app>
 - API 文档：<https://wildhunt-backend-production.up.railway.app/swagger-ui.html>
-- GitHub：<https://github.com/typsusan-zzz/wildhunt-fullstack>
+- 国内仓库（Gitee）：<https://gitee.com/susantyp/wildhunt-fullstack>
+- 国外仓库（GitHub）：<https://github.com/typsusan-zzz/wildhunt-fullstack>
 
 > 当前线上环境基于 Railway 免费资源部署，冷启动、数据库访问和多人对局同步可能偏慢。想要稳定体验，建议拉取仓库后按“本地开发”运行。
 

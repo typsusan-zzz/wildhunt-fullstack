@@ -12,7 +12,8 @@ A web-based multiplayer asymmetric hunting game: wolves must identify and catch 
 
 - Recommended entry: <https://wildhunt-backend-production.up.railway.app>
 - API docs: <https://wildhunt-backend-production.up.railway.app/swagger-ui.html>
-- GitHub: <https://github.com/typsusan-zzz/wildhunt-fullstack>
+- China repository (Gitee): <https://gitee.com/susantyp/wildhunt-fullstack>
+- International repository (GitHub): <https://github.com/typsusan-zzz/wildhunt-fullstack>
 
 > The current online environment runs on free Railway resources, so cold starts, database access, and multiplayer sync may be slow. For the best experience, clone the repository and run it locally.
 
