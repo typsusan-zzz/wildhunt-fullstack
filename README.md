@@ -5,6 +5,7 @@
 ## 在线体验
 
 - 前端：<https://wildhunt-fullstack.pages.dev>
+- 前端备用地址：<https://wildhunt-frontend-production.up.railway.app>
 - 后端健康检查：<https://wildhunt-backend-production.up.railway.app/api/health>
 - API 文档：<https://wildhunt-backend-production.up.railway.app/swagger-ui.html>
 
@@ -80,7 +81,9 @@ PORT=<provided-by-platform>
 
 后端部署在 Railway，服务名为 `wildhunt-backend`，MySQL 使用 Railway 托管服务。仓库中的 [backend/Dockerfile](backend/Dockerfile) 会打包 Maven 多模块项目并运行 `wildhunt-web`。
 
-前端部署在 Cloudflare Pages。重新部署时先使用生产环境变量构建，再上传 `frontend/dist`：
+前端主部署在 Cloudflare Pages；如果 `pages.dev` 在当前网络不可达，也可以使用 Railway 备用前端地址。
+
+Cloudflare Pages 重新部署时先使用生产环境变量构建，再上传 `frontend/dist`：
 
 ```powershell
 cd frontend
@@ -89,6 +92,8 @@ $env:VITE_WS_BASE_URL = "wss://wildhunt-backend-production.up.railway.app"
 npm run build
 npx wrangler pages deploy dist --project-name wildhunt-fullstack --branch main
 ```
+
+Railway 备用前端使用 [frontend/Dockerfile](frontend/Dockerfile) 以 Nginx 静态服务运行，服务名为 `wildhunt-frontend`。
 
 ## 安全说明
 

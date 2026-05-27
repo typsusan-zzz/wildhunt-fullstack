@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-ssr/
+.wrangler/
+*.log
+*.pid
+.env
+.env.*
