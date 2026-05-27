@@ -1,37 +1,115 @@
 # WildHunt 荒野追猎
 
-多人狼鹿追猎游戏。玩家可以匹配为狼追踪真人鹿，也可以匹配为鹿混入鹿群、进食、环顾和使用烟雾分身逃脱。
+一款基于 Web 的多人非对称追猎游戏：狼在有限时间内识别并扑杀真人鹿，鹿则混入 AI 鹿群、维持状态、观察威胁，并用一次性的烟雾分身技能制造误导。
+
+![WildHunt key art](docs/images/wildhunt-keyart.png)
 
 ## 在线体验
 
-- 前端：<https://wildhunt-backend-production.up.railway.app>
+- 推荐入口：<https://wildhunt-backend-production.up.railway.app>
 - Cloudflare Pages 镜像：<https://wildhunt-fullstack.pages.dev>
-- 后端健康检查：<https://wildhunt-backend-production.up.railway.app/api/health>
 - API 文档：<https://wildhunt-backend-production.up.railway.app/swagger-ui.html>
+- GitHub：<https://github.com/typsusan-zzz/wildhunt-fullstack>
 
-## 预览
+> 如果所在网络无法打开 `pages.dev`，请使用 Railway 推荐入口。推荐入口同时托管前端静态资源、REST API 和 WebSocket。
 
-![登录页](docs/images/wildhunt-login.png)
+## 游戏截图
 
-![大厅](docs/images/wildhunt-lobby.png)
+| 登录 | 大厅 | 对局 |
+| --- | --- | --- |
+| ![登录页](docs/images/wildhunt-login.png) | ![大厅](docs/images/wildhunt-lobby.png) | ![对局](docs/images/wildhunt-game.png) |
 
-![游戏实机](docs/images/wildhunt-game.png)
+## 玩法概览
 
-## 技术栈
+WildHunt 的核心体验是“伪装、观察、判断和反判断”。
 
-- 前端：Vite、TypeScript、Three.js、Cloudflare Pages
-- 后端：Java 17、Spring Boot 3、WebSocket、MyBatis-Plus、Flyway、Railway
-- 数据库：MySQL
+- 狼方目标：在倒计时结束前找出所有真人鹿。狼可以移动、嗅探、扑咬，但误判 AI 鹿或分身会浪费机会。
+- 鹿方目标：混入鹿群并存活到时间结束。鹿可以进食维持饥饿值、环顾观察狼的位置，并在关键时刻使用烟雾分身。
+- 烟雾分身：鹿每局只能使用一次。技能由后端权威确认，释放后原地生成烟雾和两只服务器同步的鹿分身。分身不是玩家、不计入胜负，狼扑中分身只会驱散它。
+- 匹配与房间：支持游客登录、账号登录、自定义房间、房间聊天、好友邀请、快速匹配和正式对局恢复。
+- 成长系统：包含赛季通行证、每日签到、活动奖励、排行榜和玩家资料。
 
-## 仓库结构
+![技能与图标](docs/images/wildhunt-skill-icons.png)
 
-```text
-frontend/  Vite + TypeScript 游戏客户端
-backend/   Spring Boot Maven 多模块后端
-docs/      README 截图和项目说明资源
+![大厅图标素材](docs/images/wildhunt-lobby-icons.png)
+
+## 技术架构
+
+```mermaid
+flowchart LR
+  Browser["Browser / Three.js Client"]
+  Pages["Cloudflare Pages Mirror"]
+  RailwayWeb["Railway Spring Boot Web"]
+  GameRuntime["Authoritative Match Runtime"]
+  MySQL["Railway MySQL"]
+
+  Browser -- "Static assets" --> Pages
+  Browser -- "HTTPS REST" --> RailwayWeb
+  Browser -- "WSS /ws/lobby /ws/room /ws/game" --> RailwayWeb
+  RailwayWeb --> GameRuntime
+  RailwayWeb -- "MyBatis-Plus" --> MySQL
+  RailwayWeb -- "Flyway migrations" --> MySQL
 ```
 
-## 本地运行
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant W as WebSocket Handler
+  participant M as GameMatchService
+  participant R as RuntimeMatch
+
+  C->>W: PLAYER_INPUT
+  W->>M: applyInput(matchId, userId, input)
+  M->>R: synchronized runtime.apply(...)
+  R-->>M: GameRealtimeUpdate
+  M-->>W: snapshot + skillConfirm
+  W-->>C: authoritative state broadcast
+```
+
+## 前端架构
+
+- Vite + TypeScript 构建浏览器客户端。
+- Three.js 负责 3D 场景、鹿群、狼、地形、自然物和烟雾 VFX。
+- 输入层将移动、冲刺和一次性动作拆开处理；一次性动作使用序号保证 WebSocket 至少发送一次。
+- 网络层通过 REST 处理登录、房间、匹配、奖励等业务，通过 WebSocket 接收正式对局快照。
+- 生产构建可部署到 Cloudflare Pages，也可由 Spring Boot 后端同域名托管。
+
+关键目录：
+
+```text
+frontend/src/api/       REST API client
+frontend/src/net/       WebSocket client and protocol types
+frontend/src/game/      3D game scene, input, network sync, VFX
+frontend/public/        Public static assets
+```
+
+## 后端架构
+
+- Spring Boot 3 + Java 17 提供 REST API 和 WebSocket。
+- `wildhunt-web`：控制器、WebSocket handler、CORS、安全配置和应用入口。
+- `wildhunt-service`：用户、好友、房间、匹配、对局、奖励、签到、活动等领域逻辑。
+- `wildhunt-dal`：MyBatis-Plus 实体、Mapper 和数据库访问。
+- `wildhunt-common`：通用 API 响应、工具和共享模型。
+- MySQL 使用 Flyway 迁移维护 schema；本地无 MySQL 时，部分服务保留内存兜底以便开发和测试。
+
+关键目录：
+
+```text
+backend/wildhunt-web/
+backend/wildhunt-service/
+backend/wildhunt-dal/
+backend/wildhunt-common/
+backend/wildhunt-web/src/main/resources/db/migration/
+```
+
+## 本地开发
+
+要求：
+
+- Node.js 22+
+- JDK 17
+- Maven 3.9+
+- MySQL 8+
 
 前端：
 
@@ -52,20 +130,19 @@ $env:MYSQL_URL = "jdbc:mysql://localhost:3306/wildhunt?useUnicode=true&character
 $env:MYSQL_USERNAME = "root"
 $env:MYSQL_PASSWORD = "<local-mysql-password>"
 $env:WILDHUNT_JWT_SECRET = "replace-with-a-local-secret"
+$env:SPRING_FLYWAY_ENABLED = "true"
 mvn test
 mvn package
 ```
 
-## 生产环境变量
+## 部署说明
 
-前端构建时需要：
+生产环境当前使用：
 
-```env
-VITE_API_BASE_URL=https://wildhunt-backend-production.up.railway.app
-VITE_WS_BASE_URL=wss://wildhunt-backend-production.up.railway.app
-```
+- Railway：Spring Boot 后端、WebSocket、MySQL、同域名前端静态资源。
+- Cloudflare Pages：前端镜像。
 
-后端部署时需要：
+后端需要的环境变量：
 
 ```env
 MYSQL_URL=jdbc:mysql://<host>:<port>/<database>?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
@@ -77,34 +154,21 @@ WILDHUNT_JWT_SECRET=<long-random-secret>
 PORT=<provided-by-platform>
 ```
 
-## 部署
+前端独立部署时需要的构建变量：
 
-后端部署在 Railway，服务名为 `wildhunt-backend`，MySQL 使用 Railway 托管服务。仓库中的 [backend/Dockerfile](backend/Dockerfile) 会打包 Maven 多模块项目并运行 `wildhunt-web`。
-
-生产后端同时托管 `frontend/dist` 静态产物，所以 `https://wildhunt-backend-production.up.railway.app` 可以直接打开游戏，并与 API/WebSocket 共用同一个域名。
-
-前端也部署了 Cloudflare Pages 镜像；如果 `pages.dev` 在当前网络不可达，请使用 Railway 后端根地址。
-
-Cloudflare Pages 重新部署时先使用生产环境变量构建，再上传 `frontend/dist`：
-
-```powershell
-cd frontend
-$env:VITE_API_BASE_URL = "https://wildhunt-backend-production.up.railway.app"
-$env:VITE_WS_BASE_URL = "wss://wildhunt-backend-production.up.railway.app"
-npm run build
-npx wrangler pages deploy dist --project-name wildhunt-fullstack --branch main
+```env
+VITE_API_BASE_URL=https://wildhunt-backend-production.up.railway.app
+VITE_WS_BASE_URL=wss://wildhunt-backend-production.up.railway.app
 ```
 
-Railway 独立前端也可以使用 [frontend/Dockerfile](frontend/Dockerfile) 以 Nginx 静态服务运行。
+## 安全
 
-## 安全说明
+- 不提交 `.env`、数据库密码、JWT 密钥、Cloudflare token、Railway token 或 GitHub token。
+- 生产密钥只配置在托管平台的环境变量或 Secrets 中。
+- WebSocket 握手会校验 JWT；房间、队伍和对局消息按授权范围广播。
+- 正式对局状态以后端快照为准，关键动作和结算逻辑在后端做并发保护。
 
-- 不要把 Cloudflare、Railway、GitHub token 写入源码或 README。
-- 不要提交 `.env`、数据库密码、JWT 密钥或任何生产凭据。
-- 生产密钥只应配置在 Railway / Cloudflare 的环境变量或 Secrets 中。
-- 当前 `.gitignore` 已排除 `.env`、`.env.*`、构建产物、日志和本地配置文件。
-
-## 验证命令
+## 验证
 
 ```powershell
 cd backend
@@ -113,3 +177,10 @@ mvn test package
 cd ../frontend
 npm run build
 ```
+
+当前线上验证点：
+
+- `/api/health` 返回 `UP`
+- 游客登录可写入 MySQL 并返回 token
+- `/ws/lobby` 可以建立 WebSocket 连接
+- 根地址 `/` 返回前端页面
