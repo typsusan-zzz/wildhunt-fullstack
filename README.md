@@ -4,8 +4,8 @@
 
 ## 在线体验
 
-- 前端：<https://wildhunt-fullstack.pages.dev>
-- 前端备用地址：<https://wildhunt-frontend-production.up.railway.app>
+- 前端：<https://wildhunt-backend-production.up.railway.app>
+- Cloudflare Pages 镜像：<https://wildhunt-fullstack.pages.dev>
 - 后端健康检查：<https://wildhunt-backend-production.up.railway.app/api/health>
 - API 文档：<https://wildhunt-backend-production.up.railway.app/swagger-ui.html>
 
@@ -81,7 +81,9 @@ PORT=<provided-by-platform>
 
 后端部署在 Railway，服务名为 `wildhunt-backend`，MySQL 使用 Railway 托管服务。仓库中的 [backend/Dockerfile](backend/Dockerfile) 会打包 Maven 多模块项目并运行 `wildhunt-web`。
 
-前端主部署在 Cloudflare Pages；如果 `pages.dev` 在当前网络不可达，也可以使用 Railway 备用前端地址。
+生产后端同时托管 `frontend/dist` 静态产物，所以 `https://wildhunt-backend-production.up.railway.app` 可以直接打开游戏，并与 API/WebSocket 共用同一个域名。
+
+前端也部署了 Cloudflare Pages 镜像；如果 `pages.dev` 在当前网络不可达，请使用 Railway 后端根地址。
 
 Cloudflare Pages 重新部署时先使用生产环境变量构建，再上传 `frontend/dist`：
 
@@ -93,7 +95,7 @@ npm run build
 npx wrangler pages deploy dist --project-name wildhunt-fullstack --branch main
 ```
 
-Railway 备用前端使用 [frontend/Dockerfile](frontend/Dockerfile) 以 Nginx 静态服务运行，服务名为 `wildhunt-frontend`。
+Railway 独立前端也可以使用 [frontend/Dockerfile](frontend/Dockerfile) 以 Nginx 静态服务运行。
 
 ## 安全说明
 

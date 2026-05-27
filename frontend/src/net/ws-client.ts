@@ -1,6 +1,7 @@
 import type { ClientMessage, ServerMessage } from './protocol';
 
-const WS_BASE = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8080';
+const WS_BASE = import.meta.env.VITE_WS_BASE_URL
+  ?? (import.meta.env.DEV ? 'ws://localhost:8080' : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`);
 
 export class WsClient {
   private socket?: WebSocket;
