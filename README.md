@@ -1,3 +1,7 @@
+<p align="right">
+  <strong>中文</strong> | <a href="./README.en.md">English</a>
+</p>
+
 # WildHunt 荒野追猎
 
 一款基于 Web 的多人非对称追猎游戏：狼在有限时间内识别并扑杀真人鹿，鹿则混入 AI 鹿群、维持状态、观察威胁，并用一次性的烟雾分身技能制造误导。
