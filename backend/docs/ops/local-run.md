@@ -1,11 +1,11 @@
 # Local Run
 
 ```powershell
-$env:JAVA_HOME = "C:\Users\ZhuanZ1\.jdks\ms-17.0.19"
-$env:MAVEN_HOME = "C:\apache-maven-3.9.10"
+$env:JAVA_HOME = "<path-to-jdk-17>"
+$env:MAVEN_HOME = "<path-to-maven>"
 $env:Path = "$env:JAVA_HOME\bin;$env:MAVEN_HOME\bin;$env:Path"
 $env:MYSQL_USERNAME = "root"
-$env:MYSQL_PASSWORD = "123456"
+$env:MYSQL_PASSWORD = "<local-mysql-password>"
 
 java -version
 mvn -v
@@ -18,7 +18,7 @@ CREATE DATABASE IF NOT EXISTS wildhunt
 ```
 
 ```powershell
-cd D:\工作\game_work\wildhunt-admin
+cd <repo-root>\backend
 mvn clean package
 java -jar .\wildhunt-web\target\wildhunt-web-0.1.0-SNAPSHOT.jar
 ```
@@ -26,6 +26,6 @@ java -jar .\wildhunt-web\target\wildhunt-web-0.1.0-SNAPSHOT.jar
 Or run the web module directly:
 
 ```powershell
-cd D:\工作\game_work\wildhunt-admin\wildhunt-web
+cd <repo-root>\backend\wildhunt-web
 mvn spring-boot:run
 ```

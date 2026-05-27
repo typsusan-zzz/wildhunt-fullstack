@@ -20,7 +20,7 @@
 - [x] 项目英文名称统一为：`wildhunt`。
 - [x] 后端项目名称统一为：`wildhunt-admin`。
 - [x] 后端目录与当前前端项目保持同级。
-- [x] 后端 JDK 使用本机路径：`C:\Users\ZhuanZ1\.jdks\ms-17.0.19`。
+- [x] 后端 JDK 使用本机 Java 17 路径。
 - [x] 后端 Maven 使用本机路径：`C:\apache-maven-3.9.10`。
 - [x] 后端技术栈：`Spring Boot + MyBatis-Plus + MySQL`。
 - [x] 后端形态：单体项目，可以多模块。
@@ -193,7 +193,7 @@ wildhunt-admin
 - [x] 写入以下本地启动说明：
 
 ```powershell
-$env:JAVA_HOME = "C:\Users\ZhuanZ1\.jdks\ms-17.0.19"
+$env:JAVA_HOME = "<path-to-jdk-17>"
 $env:MAVEN_HOME = "C:\apache-maven-3.9.10"
 $env:Path = "$env:JAVA_HOME\bin;$env:MAVEN_HOME\bin;$env:Path"
 
@@ -204,7 +204,7 @@ mvn -v
 ### 3.2 Windows CMD 环境变量
 
 ```bat
-set JAVA_HOME=C:\Users\ZhuanZ1\.jdks\ms-17.0.19
+set JAVA_HOME=<path-to-jdk-17>
 set MAVEN_HOME=C:\apache-maven-3.9.10
 set PATH=%JAVA_HOME%\bin;%MAVEN_HOME%\bin;%PATH%
 
@@ -2437,7 +2437,7 @@ mvn clean package
 4. 在当前项目同级目录创建 wildhunt-admin。
 5. wildhunt-admin 使用 JDK 17、Maven、Spring Boot、MyBatis-Plus、MySQL。
 6. Maven 路径是 C:\apache-maven-3.9.10。
-7. JDK 路径是 C:\Users\ZhuanZ1\.jdks\ms-17.0.19。
+7. JDK 路径使用本机 Java 17 安装目录。
 8. 后端采用单体多模块：wildhunt-common、wildhunt-dal、wildhunt-service、wildhunt-web。
 9. 创建 /api/health。
 10. 创建 application-local.example.yml。
@@ -2672,7 +2672,7 @@ mvn clean package
 ```powershell
 cd D:\projects\wildhunt-admin
 
-$env:JAVA_HOME = "C:\Users\ZhuanZ1\.jdks\ms-17.0.19"
+$env:JAVA_HOME = "<path-to-jdk-17>"
 $env:MAVEN_HOME = "C:\apache-maven-3.9.10"
 $env:Path = "$env:JAVA_HOME\bin;$env:MAVEN_HOME\bin;$env:Path"
 $env:MYSQL_USERNAME = "root"
