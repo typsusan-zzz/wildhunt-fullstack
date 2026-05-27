@@ -1,0 +1,7 @@
+**/target/
+**/.mvn/
+**/.idea/
+**/.vscode/
+**/*.log
+**/*.pid
+application-local.yml
